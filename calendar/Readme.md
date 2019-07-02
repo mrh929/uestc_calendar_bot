@@ -8,7 +8,7 @@
 
 1.  login uestc (done)
 2.  get the calendar(done)
-3.  store calendar to google cloud filestore
-4.  enable my bot to interact with users (using google filestore to store the status)
+3.  store calendar to google cloud filestore(done)
+4.  enable my bot to interact with users (using google filestore to store the status)(done)
 5. set an alarm
 

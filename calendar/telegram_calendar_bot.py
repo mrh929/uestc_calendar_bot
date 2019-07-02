@@ -216,7 +216,7 @@ def func_login(bot, update):
     'status': 1
     }, merge=True)
     #setstatus = 1
-    bot.send_message(chat_id=update.message.chat_id, text="plz input your ID:")
+    bot.send_message(chat_id=update.message.chat_id, text="plz input your student ID:")
 
 def func_login_account(bot, update):
     print("{} just input account {}".format(update.message.chat_id,update.message.text))
@@ -255,6 +255,7 @@ def func_login_passwd(bot, update):
 
 def func_login_captcha(bot, update):
     print("{} just input captcha".format(update.message.chat_id))
+    bot.send_message(chat_id=update.message.chat_id, text="Attempting to login...")
     doc_ref = db.collection(u'uestc_calendar_bot').document(str(update.message.chat_id))
     doc = doc_ref.get().to_dict()
     cookies = doc['cookies']
@@ -264,7 +265,7 @@ def func_login_captcha(bot, update):
     new_session, res = login(form, captcha, cookies)
 
     if(res == 0):
-        bot.send_message(chat_id=update.message.chat_id, text="Success! Pulling data...")
+        bot.send_message(chat_id=update.message.chat_id, text="Login success! Pulling data...")
 
         mycourse = get_all_course(new_session)
         course_print(mycourse, bot, update)
@@ -275,7 +276,7 @@ def func_login_captcha(bot, update):
     elif(res == 2):
         bot.send_message(chat_id=update.message.chat_id, text="Captcha wrong!")
     elif(res == 3):
-        bot.send_message(chat_id=update.message.chat_id, text="Student id wrong!")
+        bot.send_message(chat_id=update.message.chat_id, text="Student ID wrong!")
 
     doc_ref.set({
     'form': form,
