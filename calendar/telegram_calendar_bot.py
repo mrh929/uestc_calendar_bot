@@ -286,7 +286,7 @@ def func_login_captcha(bot, update):
 
 def func_message(bot, update):
     doc_ref = db.collection(u'uestc_calendar_bot').document(str(update.message.chat_id))
-    try:
+    try:#如果之前没有记录，自动跳转到start菜单
         doc = doc_ref.get().to_dict()
     except google.cloud.exceptions.NotFound:
         func_start(bot, update)
@@ -308,10 +308,9 @@ def func_message(bot, update):
 
 if(__name__ == "__main__"):
     logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',level=logging.INFO)
-    #$env:GOOGLE_APPLICATION_CREDENTIALS="G:\github\telebot\key\My First Project-2035ff2d3024.json"
     db = firestore.Client()
 
-    f = open("g:/github/telebot/key/token.txt","r")
+    f = open("token.txt","r")
     token = f.read()
     f.close()
     bot = telegram.Bot(token = token)
@@ -327,3 +326,5 @@ if(__name__ == "__main__"):
 
 
     updater.start_polling()
+
+#$env:GOOGLE_APPLICATION_CREDENTIALS="G:\github\telebot\key\My First Project-2035ff2d3024.json"
