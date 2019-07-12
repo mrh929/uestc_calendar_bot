@@ -1,20 +1,113 @@
 import telegram
 import google
+import requests
 import logging
 import base64
+import re
 import io
-#from telegram.ext import MessageHandler, Filters, Updater, CommandHandler
+from telegram.ext import MessageHandler, Filters, Updater, CommandHandler
 from requests_html import HTMLSession
 from google.cloud import firestore
 from bs4 import BeautifulSoup
+from Crypto.Util.Padding import pad
+from Crypto.Cipher import AES
 from PIL import Image
 
 
+def encrypt_AES(data, key, iv):#AES加密算法
+    aes = AES.new(key, AES.MODE_CBC, iv)
+    data = pad(data, AES.block_size, style='pkcs7')
+    ret = base64.b64encode(aes.encrypt(data))
+    return ret
+
+def __get_mid_text(text, left_text, right_text, start=0):#获取中间文本
+    left = text.find(left_text, start)
+    if left == -1:
+        return ('', -1)
+    left += len(left_text)
+    right = text.find(right_text, left)
+    if right == -1:
+        return ('', -1)
+    return (text[left:right], right)
+
+def get_my_ids(session):#获取ids号
+    response = session.get(
+        'http://eams.uestc.edu.cn/eams/courseTableForStd.action'
+    )
+    response.html.render()
+
+    data = __get_mid_text(response.html.html, '(form,"ids",\"', '\")')
+    if(data[1]== -1):
+        print("ids获取失败")
+        exit()
+    return data[0]
+
+def get_now_semesterid(session):#获取当前学期号
+    response = session.get(
+        'http://eams.uestc.edu.cn/eams/teach/grade/course/person.action'
+    )
+    response.html.render()
+
+    data = __get_mid_text(response.html.html, 'semesterId=', '&')
+    if(data[1]== -1):
+        print("semesterid获取失败")
+        exit()
+    ret = int(data[0])
+    return ret
+
+def get_all_course(session, semester_id = 0):#获取学期的所有课程
+    #如果未输入学期号，则默认为本学期
+    semester_id = get_now_semesterid(session) + 20 * semester_id
+    ids = get_my_ids(session)
+
+    form = {
+        "semester.id": semester_id,
+        "startWeek": "1",
+        "setting.kind": "std",
+        "ignoreHead": "1",
+        "isEng": "0",
+        "ids": ids
+    }
+
+    url = "http://eams.uestc.edu.cn/eams/courseTableForStd!courseTable.action"
+    response = session.get(url, params = form)
+    response.html.render()
+
+    course_content = response.html.html
+    begin = course_content.find("var activity=null;")
+    end = course_content.find("table0.marshalTable")
+    course_content = course_content[begin+18:end]  #对js代码进行切片，以便读取课程表
+
+    pattern = re.compile(r"(?<=\n).*?(?=\n)")#正则表达式获取每行的字符串
+    str_table = pattern.findall(course_content)
+
+    course_info = []
+    course_temp = []
+    course_time = []
+    for content in str_table: #枚举里面的所有字符串
+        if(content.find("activity = new TaskActivity") != -1):
+            if(course_temp != []):#如果之前保存了课程信息，那么就和时间一起加入人列表
+                course_info.append([course_temp, course_time])
+                course_time = []
+
+            pattern = re.compile(r"(?<=\").*?(?=\")")
+            t = pattern.findall(content)
+
+            temp = []
+            for c in t[12]:
+                temp.append(int(c))
+
+            course_temp = [t[6], t[2], t[10], temp,]
 
 
+        elif(content.find("index =") != -1):
+            a = __get_mid_text(content, "=", "*")[0] #查找上课时间
+            b = __get_mid_text(content, "+", ";")[0]
+            course_time.append([int(a), int(b)])
 
+    course_info.append([course_temp, course_time]) #收尾
 
-
+    return course_info
 
 def course_print(mycourse, bot, update):#构造一个好看的字符串发送给用户
     week={
@@ -59,7 +152,58 @@ def course_print(mycourse, bot, update):#构造一个好看的字符串发送给
     #bot.send_message(chat_id=update.message.chat_id, text=out)
 
 
+def get_captcha(acc, passwd):#获取验证码图片
+    url = 'https://idas.uestc.edu.cn/authserver/login'
+    # 获取lt,execution
+    new_session = HTMLSession()
+    response = new_session.get(url)
+    response.html.render()
+    lt_data, end = __get_mid_text(response.html.html, '"lt" value="', '"')
 
+    execution, end = __get_mid_text(
+        response.html.html, '"execution" value="', '"', end)
+    key, end = __get_mid_text(response.html.html, 'pwdDefaultEncryptSalt = "', '";')
+    passwd = encrypt_AES(b'a'*64 + passwd.encode('utf-8'), key.encode('utf-8'), b'a'*16).decode('utf-8')  #对密码进行加密
+
+    captchaUrl = "https://idas.uestc.edu.cn/authserver/captcha.html?ts=1"
+    img = new_session.get(captchaUrl).html.html   #获取到验证码图片
+    #***图片如何处理
+
+    form = {  #构造post的form
+        "username" : acc ,
+        "password" : passwd, #需要加盐计算
+        "lt": lt_data,
+        "dllt": "userNamePasswordLogin",
+        "execution": execution,
+        "_eventId": "submit",
+        "rmShown": "1"
+    }
+
+    return (form, img.content, new_session) #返回form和img还有登录时使用的session，以便进行登录
+
+def login(form, captcha, cookies):#登录uestc
+    form["captchaResponse"] = captcha
+    url = 'https://idas.uestc.edu.cn/authserver/login'
+
+    new_session = HTMLSession()
+    response = new_session.post(url, data=form, cookies = cookies)
+    response.html.render()
+
+    if("密码有误" in response.html.html): #密码错误
+        return (new_session, 1)
+    elif("无效的验证码" in response.html.html):#验证码错误
+        return (new_session, 2)
+    elif("<small>忘记密码？</small>" in response.html.html):#账号错误
+        return (new_session, 3)
+
+    response = new_session.get(
+        'http://eams.uestc.edu.cn/eams/courseTableForStd.action')
+    response.html.render()
+    if '踢出' in response.html.html:
+        click_url = __get_mid_text(response.html.html, '请<a href="', '"')
+        new_session.get(click_url[0])
+
+    return (new_session, 0)
 
 def func_start(bot, update):
     print("{} just started".format(update.message.chat_id))
@@ -69,7 +213,8 @@ def func_start(bot, update):
     'status': 0
     })
     #setstatus = 0
-
+    bot.send_message(chat_id=update.message.chat_id,
+        text="Welcome to YouESTC alarm clock!\n\nThis bot is used to query your timetable and alarm you before class.\n\nCommands:\n/login : to login into uestc")
     #bot.send_message(chat_id=update.message.chat_id, text="plz input your ID and passwd:")
 
 def func_login(bot, update):
